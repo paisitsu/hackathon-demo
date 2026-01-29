@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write # อนุญาตให้เขียน Comment
+  pull-requests: write
 
 jobs:
   ai-security-check:
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: "3.10" # ✅ อัปเกรดเป็น 3.10 ลบ Warning
 
       - name: Install Dependencies
         run: pip install PyGithub google-generativeai
@@ -37,9 +37,16 @@ jobs:
 
           # Config
           genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-          model = genai.GenerativeModel('gemini-1.5-flash')
+
+          # ✅ แก้ชื่อ Model เป็น 'gemini-1.5-flash-latest' หรือ 'gemini-pro' เพื่อความชัวร์
+          try:
+              model = genai.GenerativeModel('gemini-1.5-flash-latest')
+          except:
+              print("⚠️ Flash model not found, falling back to Gemini Pro")
+              model = genai.GenerativeModel('gemini-pro')
 
           def analyze():
+              print("🚀 Starting Analysis...")
               g = Github(os.getenv("GITHUB_TOKEN"))
               repo = g.get_repo(os.getenv("REPO_NAME"))
               pr = repo.get_pull(int(os.getenv("PR_NUMBER")))
@@ -47,54 +54,47 @@ jobs:
               # 1. Get Diff
               diff_text = ""
               for file in pr.get_files():
-                  if file.filename.endswith(('.cs', '.js', '.ts', '.py', '.java', '.sql')):
-                      diff_text += f"\n--- File: {file.filename} ---\n"
-                      diff_text += file.patch[:5000] if file.patch else "New File"
+                  # เอา filter นามสกุลออกเพื่อ Test
+                  diff_text += f"\n--- File: {file.filename} ---\n"
+                  diff_text += file.patch[:5000] if file.patch else "New File"
 
-              if not diff_text:
-                  print("No code changes to analyze.")
+              if not diff_text or len(diff_text) < 10:
+                  print("❌ No code changes found.")
+                  pr.create_issue_comment("⚠️ VulnGuard: ไม่พบการแก้ไข Code (No Diff found)")
                   return
 
-              # 2. Ask AI (With Hack Simulator Prompt)
+              # 2. Ask AI
               prompt = f"""
-              Role: You are 'VulnGuard', a cybersecurity expert and ethical hacker.
-              Task: Analyze this code diff. If you find a vulnerability (OWASP Top 10), demonstrate how to exploit it.
-
+              Role: You are 'VulnGuard'.
+              Task: Analyze this code diff.
               Code:
               {diff_text[:15000]}
-
-              Response Format (Markdown):
-              If SAFE: Just say "✅ Code looks secure."
-              If VULNERABLE:
-              ## 🚨 Security Alert: [Vulnerability Name]
-              **Severity:** Critical/High
               
-              ### ☠️ Hack Simulator (What would happen?)
-              ```bash
-              [ATTACKER TERMINAL]
-              > Payload sent: ...
-              > SYSTEM RESPONSE: ... (Simulate data leak or system crash)
-              ```
-              
-              ### 🛡️ Fix
-              ```csharp
-              // Corrected Code
-              ```
+              If Vulnerable: Show "🚨 Security Alert" and "☠️ Hack Simulator".
+              If Safe: Show "✅ Code looks secure".
               """
               
-              print("Sending to Gemini...")
-              response = model.generate_content(prompt)
-              
-              # 3. Post Comment
-              print("Posting to GitHub...")
-              pr.create_issue_comment(response.text)
+              print("🧠 Sending to Gemini...")
+              try:
+                  response = model.generate_content(prompt)
+                  ai_text = response.text
+                  print("✅ AI Responded!")
+                  
+                  # 3. Post Comment
+                  print("📝 Posting to GitHub...")
+                  pr.create_issue_comment(ai_text)
+                  print("✅ Comment Posted!")
+                  
+              except Exception as e:
+                  print(f"❌ AI/Post Error: {e}")
+                  # โพสต์บอกหน่อยว่า AI พัง
+                  pr.create_issue_comment(f"⚠️ VulnGuard Error: {e}")
 
           if __name__ == "__main__":
               try:
                   analyze()
               except Exception as e:
-                  print(f"Error: {e}")
+                  print(f"🔥 Critical Error: {e}")
           EOF
 
-          # Run the script
           python ai_scanner.py
