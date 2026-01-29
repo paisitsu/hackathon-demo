@@ -1,0 +1,100 @@
+name: 🛡️ VulnGuard AI Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write # อนุญาตให้เขียน Comment
+
+jobs:
+  ai-security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install Dependencies
+        run: pip install PyGithub google-generativeai
+
+      - name: Run VulnGuard AI Analysis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          REPO_NAME: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          cat << 'EOF' > ai_scanner.py
+          import os
+          import google.generativeai as genai
+          from github import Github
+
+          # Config
+          genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+          model = genai.GenerativeModel('gemini-1.5-flash')
+
+          def analyze():
+              g = Github(os.getenv("GITHUB_TOKEN"))
+              repo = g.get_repo(os.getenv("REPO_NAME"))
+              pr = repo.get_pull(int(os.getenv("PR_NUMBER")))
+              
+              # 1. Get Diff
+              diff_text = ""
+              for file in pr.get_files():
+                  if file.filename.endswith(('.cs', '.js', '.ts', '.py', '.java', '.sql')):
+                      diff_text += f"\n--- File: {file.filename} ---\n"
+                      diff_text += file.patch[:5000] if file.patch else "New File"
+
+              if not diff_text:
+                  print("No code changes to analyze.")
+                  return
+
+              # 2. Ask AI (With Hack Simulator Prompt)
+              prompt = f"""
+              Role: You are 'VulnGuard', a cybersecurity expert and ethical hacker.
+              Task: Analyze this code diff. If you find a vulnerability (OWASP Top 10), demonstrate how to exploit it.
+
+              Code:
+              {diff_text[:15000]}
+
+              Response Format (Markdown):
+              If SAFE: Just say "✅ Code looks secure."
+              If VULNERABLE:
+              ## 🚨 Security Alert: [Vulnerability Name]
+              **Severity:** Critical/High
+              
+              ### ☠️ Hack Simulator (What would happen?)
+              ```bash
+              [ATTACKER TERMINAL]
+              > Payload sent: ...
+              > SYSTEM RESPONSE: ... (Simulate data leak or system crash)
+              ```
+              
+              ### 🛡️ Fix
+              ```csharp
+              // Corrected Code
+              ```
+              """
+              
+              print("Sending to Gemini...")
+              response = model.generate_content(prompt)
+              
+              # 3. Post Comment
+              print("Posting to GitHub...")
+              pr.create_issue_comment(response.text)
+
+          if __name__ == "__main__":
+              try:
+                  analyze()
+              except Exception as e:
+                  print(f"Error: {e}")
+          EOF
+
+          # Run the script
+          python ai_scanner.py
