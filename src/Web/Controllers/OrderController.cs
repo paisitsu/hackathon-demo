@@ -21,7 +21,7 @@ public class OrderController : Controller
 
     [HttpGet]
     public async Task<IActionResult> MyOrders()
-    {   
+    {
         Guard.Against.Null(User?.Identity?.Name, nameof(User.Identity.Name));
         var viewModel = await _mediator.Send(new GetMyOrders(User.Identity.Name));
 
@@ -40,5 +40,14 @@ public class OrderController : Controller
         }
 
         return View(viewModel);
+    }
+
+    // Temporary debug query - REMOVE BEFORE PROD
+    public IActionResult GetOrderByUser(string username)
+    {
+        // ❌ Vulnerable Code: SQL Injection
+        string query = "SELECT * FROM Orders WHERE UserName = '" + username + "'";
+        var result = _dbContext.Database.ExecuteSqlRaw(query);
+        return Ok(result);
     }
 }
