@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: "3.11" # ใช้รุ่นใหม่ ลดปัญหา Library เก่า
 
       - name: Install Dependencies
         run: pip install --upgrade PyGithub google-generativeai
@@ -39,51 +39,67 @@ jobs:
           # Config
           genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-          # -------------------------------------------------------
-          # 🎯 MODEL SELECTOR (ฉบับอิงตาม Log ของคุณ)
-          # -------------------------------------------------------
-          # เลือกเฉพาะตัวที่มีใน Log ของคุณเท่านั้น เพื่อกัน 404
-          candidate_models = [
-              'gemini-flash-latest',       # ✅ ตัวนี้มีใน Log ชัวร์ (น่าจะเป็น 1.5)
-              'gemini-pro-latest',         # ✅ ตัวนี้ก็มีใน Log (สำรอง)
-              'gemini-2.0-flash-lite-preview-02-05', # เผื่อฟลุ๊คตัว Lite ฟรี
-          ]
+          def get_best_model():
+              print("🔍 Scanning for available models...")
+              try:
+                  # 1. ดึง List โมเดลทั้งหมดที่ Key คุณใช้ได้
+                  available_models = []
+                  for m in genai.list_models():
+                      if 'generateContent' in m.supported_generation_methods:
+                          available_models.append(m.name)
+                  
+                  print(f"📋 Found models: {available_models}")
 
-          def get_working_model():
-              print("🔍 Finding a working model from your available list...")
-              
-              for model_name in candidate_models:
-                  print(f"👉 Testing model: {model_name} ...", end=" ")
-                  try:
-                      model = genai.GenerativeModel(model_name)
-                      # ลองยิงคำถามสั้นๆ เพื่อเช็ค Quota
-                      response = model.generate_content("Hi")
-                      if response and response.text:
-                          print("✅ WORKED! (Quota Available)")
-                          return model
-                  except Exception as e:
-                      print(f"❌ Failed ({e})")
-                      time.sleep(1) 
-              
-              # ถ้าไม่เจอเลย ให้ลองตัวสุดท้ายแบบวัดดวง (gemini-pro)
-              print("⚠️ All specific models failed, trying generic 'gemini-pro'...")
-              return genai.GenerativeModel('gemini-pro')
+                  # 2. จัดลำดับความสำคัญ (Priority List)
+                  # เลือก gemini-1.5 หรือ flash-latest ก่อน (เพราะฟรีและเสถียร)
+                  # เลี่ยง 2.0 (เพราะคุณติด Quota)
+                  priority_keywords = [
+                      'gemini-1.5-flash', 
+                      'gemini-flash-latest', 
+                      'gemini-1.5-pro',
+                      'gemini-pro',
+                  ]
+                  
+                  # 3. ลอง Test ยิงทีละตัว (Auto-Discovery)
+                  for keyword in priority_keywords:
+                      # หาโมเดลที่มีชื่อตรงกับ keyword
+                      candidates = [m for m in available_models if keyword in m]
+                      
+                      for model_name in candidates:
+                          # ข้ามตัว 2.0 ไปก่อน เพราะ Log ฟ้องว่า Quota เต็ม
+                          if '2.0' in model_name: 
+                              continue
+                              
+                          print(f"👉 Testing model: {model_name} ...", end=" ")
+                          try:
+                              test_model = genai.GenerativeModel(model_name)
+                              test_model.generate_content("Ping") # Test ยิงจริง
+                              print("✅ SUCCESS! Using this model.")
+                              return test_model
+                          except Exception as e:
+                              print(f"❌ Failed ({e})")
+                              time.sleep(1)
+
+                  # ถ้าไม่เจอเลย ให้ลองตัวสุดท้ายที่มี (Fallback)
+                  print("⚠️ No priority model worked. Trying first available...")
+                  return genai.GenerativeModel(available_models[0])
+
+              except Exception as e:
+                  print(f"🔥 Error listing models: {e}")
+                  # ไม้ตายสุดท้าย: ใช้ชื่อ Alias ที่มีใน Log ชัวร์ๆ
+                  return genai.GenerativeModel('gemini-flash-latest')
 
           def analyze():
               print("🚀 Starting Analysis...")
               
-              # 1. หาโมเดล
-              try:
-                  model = get_working_model()
-              except:
-                  print("❌ Could not find any working model.")
-                  return
-
+              # เลือกโมเดลอัตโนมัติ
+              model = get_best_model()
+              
               g = Github(os.getenv("GITHUB_TOKEN"))
               repo = g.get_repo(os.getenv("REPO_NAME"))
               pr = repo.get_pull(int(os.getenv("PR_NUMBER")))
               
-              # 2. Get Diff
+              # 1. Get Diff
               diff_text = ""
               for file in pr.get_files():
                   diff_text += f"\n--- File: {file.filename} ---\n"
@@ -94,7 +110,7 @@ jobs:
                   pr.create_issue_comment("⚠️ VulnGuard: ไม่พบการแก้ไข Code (No Diff found)")
                   return
 
-              # 3. Ask AI
+              # 2. Ask AI
               prompt = f"""
               Role: You are 'VulnGuard'.
               Task: Analyze this code diff.
