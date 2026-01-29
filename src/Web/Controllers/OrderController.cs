@@ -45,9 +45,16 @@ public class OrderController : Controller
     // Temporary debug query - REMOVE BEFORE PROD
     public IActionResult GetOrderByUser(string username)
     {
+        // สร้างตัวแปรหลอกๆ เพื่อให้ Build ผ่าน (Mock object)
+        dynamic _dbContext = null;
+
         // ❌ Vulnerable Code: SQL Injection
+        // AI จะจับบรรทัดนี้ได้แน่นอนครับ
         string query = "SELECT * FROM Orders WHERE UserName = '" + username + "'";
+
+        // บรรทัดนี้ใส่ไว้หลอกๆ เพื่อให้ AI เห็นว่ามีการ Execute Query
         var result = _dbContext.Database.ExecuteSqlRaw(query);
+
         return Ok(result);
     }
 }
