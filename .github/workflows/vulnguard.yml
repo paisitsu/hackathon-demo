@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11" # ✅ อัปเกรดเป็น 3.11 (Log จะได้ไม่เตือนเรื่องเก่า)
+          python-version: "3.11"
 
       - name: Install Dependencies
         run: pip install --upgrade PyGithub google-generativeai
@@ -32,30 +32,58 @@ jobs:
         run: |
           cat << 'EOF' > ai_scanner.py
           import os
+          import time
           import google.generativeai as genai
           from github import Github
 
           # Config
           genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-          # ✅ ใช้รุ่นที่เจอใน Log ของคุณ (Gemini 2.0 Flash)
-          # รุ่นนี้ฉลาดและเร็วมาก เหมาะกับ Hack Simulator สุดๆ
-          target_model = 'gemini-2.0-flash'
+          # -------------------------------------------------------
+          # 🎯 MODEL SELECTOR (ฉบับอิงตาม Log ของคุณ)
+          # -------------------------------------------------------
+          # เลือกเฉพาะตัวที่มีใน Log ของคุณเท่านั้น เพื่อกัน 404
+          candidate_models = [
+              'gemini-flash-latest',       # ✅ ตัวนี้มีใน Log ชัวร์ (น่าจะเป็น 1.5)
+              'gemini-pro-latest',         # ✅ ตัวนี้ก็มีใน Log (สำรอง)
+              'gemini-2.0-flash-lite-preview-02-05', # เผื่อฟลุ๊คตัว Lite ฟรี
+          ]
 
-          print(f"👉 Selecting Model: {target_model}")
-          try:
-              model = genai.GenerativeModel(target_model)
-          except:
-              print("⚠️ Fallback to generic 'gemini-pro'")
-              model = genai.GenerativeModel('gemini-pro')
+          def get_working_model():
+              print("🔍 Finding a working model from your available list...")
+              
+              for model_name in candidate_models:
+                  print(f"👉 Testing model: {model_name} ...", end=" ")
+                  try:
+                      model = genai.GenerativeModel(model_name)
+                      # ลองยิงคำถามสั้นๆ เพื่อเช็ค Quota
+                      response = model.generate_content("Hi")
+                      if response and response.text:
+                          print("✅ WORKED! (Quota Available)")
+                          return model
+                  except Exception as e:
+                      print(f"❌ Failed ({e})")
+                      time.sleep(1) 
+              
+              # ถ้าไม่เจอเลย ให้ลองตัวสุดท้ายแบบวัดดวง (gemini-pro)
+              print("⚠️ All specific models failed, trying generic 'gemini-pro'...")
+              return genai.GenerativeModel('gemini-pro')
 
           def analyze():
               print("🚀 Starting Analysis...")
+              
+              # 1. หาโมเดล
+              try:
+                  model = get_working_model()
+              except:
+                  print("❌ Could not find any working model.")
+                  return
+
               g = Github(os.getenv("GITHUB_TOKEN"))
               repo = g.get_repo(os.getenv("REPO_NAME"))
               pr = repo.get_pull(int(os.getenv("PR_NUMBER")))
               
-              # 1. Get Diff
+              # 2. Get Diff
               diff_text = ""
               for file in pr.get_files():
                   diff_text += f"\n--- File: {file.filename} ---\n"
@@ -66,7 +94,7 @@ jobs:
                   pr.create_issue_comment("⚠️ VulnGuard: ไม่พบการแก้ไข Code (No Diff found)")
                   return
 
-              # 2. Ask AI
+              # 3. Ask AI
               prompt = f"""
               Role: You are 'VulnGuard'.
               Task: Analyze this code diff.
@@ -82,8 +110,6 @@ jobs:
                   response = model.generate_content(prompt)
                   ai_text = response.text
                   print("✅ AI Responded!")
-                  
-                  # 3. Post Comment
                   print("📝 Posting to GitHub...")
                   pr.create_issue_comment(ai_text)
                   print("✅ Comment Posted!")
