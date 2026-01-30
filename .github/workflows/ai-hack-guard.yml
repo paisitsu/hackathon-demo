@@ -1,4 +1,4 @@
-name: 🛡️ VulnGuard AI Security Scan
+name: 🛡️ AI Hack Guard Security Scan
 
 on:
   pull_request:
@@ -23,7 +23,7 @@ jobs:
       - name: Install Dependencies
         run: pip install --upgrade PyGithub google-generativeai
 
-      - name: Run VulnGuard AI Analysis
+      - name: Run AI Hack Guard Analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
