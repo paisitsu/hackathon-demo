@@ -21,7 +21,7 @@ public class OrderController : Controller
 
     [HttpGet]
     public async Task<IActionResult> MyOrders()
-    {   
+    {
         Guard.Against.Null(User?.Identity?.Name, nameof(User.Identity.Name));
         var viewModel = await _mediator.Send(new GetMyOrders(User.Identity.Name));
 
@@ -40,5 +40,21 @@ public class OrderController : Controller
         }
 
         return View(viewModel);
+    }
+
+    // Temporary debug query - REMOVE BEFORE PROD
+    public IActionResult GetOrderByUser(string username)
+    {
+        // สร้างตัวแปรหลอกๆ เพื่อให้ Build ผ่าน (Mock object)
+        dynamic _dbContext = null;
+
+        // ❌ Vulnerable Code: SQL Injection
+        // AI จะจับบรรทัดนี้ได้แน่นอนครับ
+        string query = "SELECT * FROM Orders WHERE UserName = '" + username + "'";
+
+        // บรรทัดนี้ใส่ไว้หลอกๆ เพื่อให้ AI เห็นว่ามีการ Execute Query
+        var result = _dbContext.Database.ExecuteSqlRaw(query);
+
+        return Ok(result);
     }
 }
